@@ -1,0 +1,3 @@
+[submodule "scripts/ts-parser"]
+	path = scripts/ts-parser
+	url = https://github.com/gpfernandezflorio/ts-parser.git
