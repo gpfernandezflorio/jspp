@@ -1,3 +1,6 @@
 [submodule "scripts/ts-parser"]
 	path = scripts/ts-parser
 	url = https://github.com/gpfernandezflorio/ts-parser.git
+[submodule "scripts/bibpy"]
+	path = scripts/bibpy
+	url = https://github.com/gpfernandezflorio/bibpy.git
