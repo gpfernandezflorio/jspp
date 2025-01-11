@@ -9,7 +9,7 @@ datosConversion = Datos()
 generarSalida = False # True
 
 def main():
-  ConvertirCarpeta_("../../blockly/core/clipboard")
+  ConvertirCarpeta_("test")
   exit(0)
 
   if len(sys.argv) == 1:
@@ -31,8 +31,8 @@ def ConvertirCarpeta_(rutaCarpeta):
     ReiniciarSalida()
   ConvertirCarpeta_En_(rutaCarpeta, datosConversion)
   datosConversion.limpiarRutas()
-  datosConversion.MostrarArchivos()
   datosConversion.resolverDependencias()
+  datosConversion.MostrarArchivos()
   if generarSalida:
     escribirCarpeta_En_(datosConversion, CARPETA_SALIDA)
 
