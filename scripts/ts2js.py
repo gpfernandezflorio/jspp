@@ -6,11 +6,12 @@ from main import parsearArchivo
 
 CARPETA_SALIDA = 'output'
 datosConversion = Datos()
-generarSalida = False # True
+generarSalida = True
 
 def main():
-  ConvertirCarpeta_("test")
+  ConvertirCarpeta_("test1")
   exit(0)
+  ConvertirCarpeta_("test")
 
   if len(sys.argv) == 1:
     Boom("No me pasaste ningún archivo ni carpeta")
@@ -31,7 +32,7 @@ def ConvertirCarpeta_(rutaCarpeta):
     ReiniciarSalida()
   ConvertirCarpeta_En_(rutaCarpeta, datosConversion)
   datosConversion.limpiarRutas()
-  datosConversion.resolverDependencias()
+  datosConversion.ts2js()
   datosConversion.MostrarArchivos()
   if generarSalida:
     escribirCarpeta_En_(datosConversion, CARPETA_SALIDA)
@@ -53,7 +54,7 @@ def ConvertirCarpeta_En_(rutaCarpeta, destino):
 
 def escribirCarpeta_En_(carpetaRaiz, rutaDestino):
   for archivo in carpetaRaiz.listaDeArchivos():
-    CrearArchivo_En_Con_(archivo.nombre, rutaDestino, archivo.contenido())
+    CrearArchivo_En_Con_(f"{archivo.nombre}.js", rutaDestino, archivo.contenido())
   for carpeta in carpetaRaiz.listaDeCarpetas():
     CrearCarpeta_En_(carpeta.nombre, rutaDestino)
     rutaCarpeta = nuevaRuta_(rutaDestino, carpeta.nombre)
