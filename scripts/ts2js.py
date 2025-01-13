@@ -9,9 +9,8 @@ datosConversion = Datos()
 generarSalida = True
 
 def main():
-  ConvertirCarpeta_("test1")
+  ConvertirCarpeta_("test/cero")
   exit(0)
-  ConvertirCarpeta_("test")
 
   if len(sys.argv) == 1:
     Boom("No me pasaste ningún archivo ni carpeta")
@@ -33,7 +32,7 @@ def ConvertirCarpeta_(rutaCarpeta):
   ConvertirCarpeta_En_(rutaCarpeta, datosConversion)
   datosConversion.limpiarRutas()
   datosConversion.ts2js()
-  datosConversion.MostrarArchivos()
+  # datosConversion.MostrarArchivos()
   if generarSalida:
     escribirCarpeta_En_(datosConversion, CARPETA_SALIDA)
 
