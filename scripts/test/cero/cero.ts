@@ -31,6 +31,7 @@ function restarSi(condicion : (x: number) => boolean) : boolean {
   if (condicion(_cantidad)) {
     return true;
   }
+  sumar(1);
   return false;
 };
 

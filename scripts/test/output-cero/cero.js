@@ -31,6 +31,7 @@ function restarSi(condicion : (x: number) => boolean) : boolean {
   if (condicion(_cantidad)) {
     return true;
   }
+  sumar(1);
   return false;
 };
 
@@ -42,7 +43,7 @@ export class Control {
     restarSi((x)=>x>5);
     return this.nombre;
   }
-  
+
   descontrolar() {
     Avanzar(this.sumar());
   }

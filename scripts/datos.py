@@ -1,5 +1,5 @@
 import sys, os
-from bibpy.listas import fold, mapear
+from bibpy.listas import fold, mapear, filtrar
 sys.path.insert(0, os.path.abspath(os.path.join('.','ts-parser','src')))
 from parser import *
 
@@ -15,7 +15,7 @@ class Archivo(object):
     self.modulo = nombreModulo(self)
     self.definiciones = DefinicionesModulo(self)
     self.importados = []
-    self.exportados = []
+    # self.exportados = []
     self.milaAst = None
   def limpiarRuta(self, pre):
     self.ruta = self.ruta[pre:]
@@ -27,8 +27,8 @@ class Archivo(object):
       tab += "  "
     print(f"{tab}{self.nombre} ({self.nombreModulo()})")
     print(f"{tab}  {list(map(lambda x : x.ls(), self.importados))}")
-    for exportado in self.exportados:
-      print(f"{tab}  {exportado}")
+    # for exportado in self.exportados:
+    #   print(f"{tab}  {exportado}")
     if mostrarAST:
       print(self.ast)
       print("\n\n")
@@ -37,11 +37,11 @@ class Archivo(object):
   def nombresLocales(self):
     return self.definiciones.todosLosNombres()
   def exponerExportados(self):
-    for declaracion in self.ast.declaraciones:
-      if type(declaracion) is AST_export:
-        self.exportados.append(declaracion.exportable)
-      elif type(declaracion) is AST_declaracion_variable:
-        self.definiciones.definir(declaracion)
+    # for declaracion in self.ast.declaraciones:
+    #   if type(declaracion) is AST_export:
+    #     self.exportados.append(declaracion.exportable)
+    for definicion in BuscarDefiniciones(self.ast.declaraciones):
+      self.definiciones.definir(definicion)
   def buscarDependencias(self):
     for declaracion in self.ast.declaraciones:
       if type(declaracion) is AST_import:
@@ -69,7 +69,13 @@ class DefinicionesModulo(object):
     self.nombres = {}
   def definir(self, declaracion):
     if type(declaracion) is AST_declaracion_variable:
-      nombre = declaracion.nombre.identificador
+      nombre = nombreNodo(declaracion)
+      self.nombres[nombre] = self.modulo + '.' + nombre
+    elif type(declaracion) is AST_declaracion_funcion:
+      nombre = nombreNodo(declaracion)
+      self.nombres[nombre] = self.modulo + '.' + nombre
+    elif type(declaracion) is AST_declaracion_clase:
+      nombre = nombreNodo(declaracion)
       self.nombres[nombre] = self.modulo + '.' + nombre
   def todosLosNombres(self):
     return list(self.nombres.keys())
@@ -182,6 +188,8 @@ class Datos(object):
         return self.procesando.archivoActual.nombreModulo() + '.' + nombreOriginal
       else:
         falla()
+    else:
+      return nombreOriginal
   def enEntornoArchivo(self):
     return self.procesando.entornoActual().id == "ARCHIVO"
   def entrar(self, nodo):
@@ -198,9 +206,11 @@ class Procesamiento(object):
   def entrar(self, nodo):
     entorno = None
     if type(nodo) is AST_declaracion_funcion:
-      entorno = EntornoFuncion()
+      entorno = EntornoFuncion(nodo)
+    elif type(nodo) is AST_expresion_funcion:
+      entorno = EntornoFuncion(nodo)
     elif type(nodo) is AST_declaracion_clase:
-      entorno = EntornoClase()
+      entorno = EntornoClase(nodo)
     else:
       falla()
     self.entornos.insert(0, entorno)
@@ -208,7 +218,7 @@ class Procesamiento(object):
     del self.entornos[0]
   def entornoPara(self, nombre):
     for entorno in self.entornos:
-      if entorno.define(nombre):
+      if entorno.estaDefinido(nombre):
         return entorno
     return None
 
@@ -223,7 +233,7 @@ class Entorno(object):
     return False
   def esFuncion(self):
     return False
-  def define(self, nombre):
+  def estaDefinido(self, nombre):
     return nombre in self.definiciones
 
 class EntornoArchivo(Entorno):
@@ -234,18 +244,46 @@ class EntornoArchivo(Entorno):
     return True
 
 class EntornoClase(Entorno):
-  def __init__(self):
+  def __init__(self, nodo_declaracion):
     self.id = "CLASE"
-    self.definiciones = []
+    self.definiciones = mapear(nombreNodo, BuscarDefiniciones(nodo_declaracion.definicion.contenido))
   def esClase(self):
     return True
 
 class EntornoFuncion(Entorno):
-  def __init__(self):
+  def __init__(self, nodo_declaracion):
     self.id = "FUNCION"
-    self.definiciones = []
+    self.definiciones = mapear(lambda x : x.identificador,
+      filtrar(lambda x : type(x) is AST_identificador, nodo_declaracion.parametros.parametros))
   def esFuncion(self):
     return True
+
+def BuscarDefiniciones(nodo_o_lista):
+  resultado = []
+  if type(nodo_o_lista) == type([]):
+    resultado = fold(lambda rec, x : rec + BuscarDefiniciones(x), [], nodo_o_lista)
+  elif type(nodo_o_lista) is AST_export:
+    resultado = BuscarDefiniciones(nodo_o_lista.exportable)
+  elif type(nodo_o_lista) is AST_declaracion_variable:
+    resultado = [nodo_o_lista]
+  elif type(nodo_o_lista) is AST_declaracion_funcion:
+    resultado = [nodo_o_lista]
+  elif type(nodo_o_lista) is AST_declaracion_clase:
+    resultado = [nodo_o_lista]
+  return resultado
+
+def nombreNodo(nodo):
+  if type(nodo) is AST_declaracion_variable:
+    return nodo.nombre.identificador
+  elif type(nodo) is AST_declaracion_funcion:
+    return nodo.nombre.identificador
+  elif type(nodo) is AST_declaracion_clase:
+    return nombreNodo(nodo.nombre)
+  elif type(nodo) is AST_tipo_base:
+    return nodo.base.identificador
+  elif type(nodo) is AST_tipo_compuesto:
+    return nombreNodo(nodo.base)
+  falla()
 
 def contenidoString(string):
   resultado = string
@@ -278,50 +316,61 @@ def limpiarAst(nodo, datos):
   if tipo == AST_programa:
     nuevasDeclaraciones = limpiarAst(nodo.declaraciones, datos)
     nuevoNodo = AST_programa(nuevasDeclaraciones)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_comentario:
     nuevoNodo = AST_comentario(nodo.contenido)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_espacios:
     nuevoNodo = AST_espacios(nodo.espacios)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_salto:
     nuevoNodo = AST_salto(nodo.espacios)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_sintaxis:
     nuevoNodo = AST_sintaxis(nodo.contenido)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_declaracion_funcion:
     nuevoNombre = limpiarAst(nodo.nombre, datos)
-    nuevosParametros = limpiarAst(nodo.parametros, datos)
     datos.entrar(nodo)
+    nuevosParametros = limpiarAst(nodo.parametros, datos)
     nuevoCuerpo = limpiarAst(nodo.cuerpo, datos)
     datos.salir()
+    if datos.enEntornoArchivo():
+      nuevoNombre.clausura(' = function')
     funcion_incompleta = AST_funcion_incompleta(nuevosParametros, nuevoCuerpo)
-    nuevosDecoradores = limpiarAst(nodo.decoradores, datos)
-    for d in nuevosDecoradores:
-      funcion_incompleta.agregar_decorador(d)
     nuevoNodo = AST_declaracion_funcion(nuevoNombre, funcion_incompleta)
-    nuevoNodo.imitarEspacios(nodo)
+    if datos.enEntornoArchivo():
+      nuevoNodo.apertura('*/')
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
+    if datos.enEntornoArchivo():
+      nuevoNodo.apertura('/*')
     return nuevoNodo
   if tipo == AST_declaracion_clase:
     nuevoNombre = limpiarAst(nodo.nombre, datos)
     datos.entrar(nodo)
     nuevaDefinicion = limpiarAst(nodo.definicion, datos)
     datos.salir()
+    if datos.enEntornoArchivo():
+      nuevoNombre.clausura('= class ')
     nuevoNodo = AST_declaracion_clase(nuevoNombre, nuevaDefinicion)
-    nuevoNodo.imitarEspacios(nodo)
+    if datos.enEntornoArchivo():
+      nuevoNodo.apertura('*/')
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
+    if datos.enEntornoArchivo():
+      nuevoNodo.apertura('/*')
     return nuevoNodo
   if tipo == AST_declaracion_tipo:
     nuevoNombre = limpiarAst(nodo.nombre, datos)
     nuevaDefinicion = limpiarAst(nodo.definicion, datos)
     nuevoNodo = AST_declaracion_tipo(nuevoNombre, nuevaDefinicion)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
+    nuevoNodo.apertura('/*')
+    nuevoNodo.clausura('*/')
     return nuevoNodo
   if tipo == AST_declaracion_variable:
     nuevoNombre = limpiarAst(nodo.nombre, datos)
@@ -332,69 +381,65 @@ def limpiarAst(nodo, datos):
       if len(nodo.otros) > 0:
         falla()
       nuevoNodo.apertura('*/')
-      nuevoNodo.imitarEspacios(nodo)
+      imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
       nuevoNodo.apertura('/*')
     else:
       nuevoNodo = AST_declaracion_variable(nuevoNombre, nuevaAsignacion)
       nuevosOtros = limpiarAst(nodo.otros, datos)
       for o in nuevosOtros:
         nuevoNodo.identificador_adicional(o)
-      nuevoNodo.imitarEspacios(nodo)
+      imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_cuerpo:
     nuevoContenido = limpiarAst(nodo.contenido, datos)
     nuevoNodo = AST_cuerpo(nuevoContenido)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_expresion_literal:
     nuevoNodo = AST_expresion_literal(nodo.literal)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_format_string:
     nuevoNodo = AST_format_string(nodo.tmp) # TODO: corregir tras parsear el contenido
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_expresion_objeto:
     nuevosCampos = limpiarAst(nodo.campos, datos)
     nuevoNodo = AST_expresion_objeto(nuevosCampos)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_expresion_lista:
     nuevosElementos = limpiarAst(nodo.elementos, datos)
     nuevoNodo = AST_expresion_lista(nuevosElementos)
-    nuevosDecoradores = limpiarAst(nodo.decoradores, datos)
-    for d in nuevosDecoradores:
-      nuevoNodo.agregar_decorador(d)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_expresion_identificador:
     nuevosIdentificador = limpiarAst(nodo.identificador, datos)
     nuevoNodo = AST_expresion_identificador(nuevosIdentificador)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_expresion_funcion:
+    datos.entrar(nodo)
     nuevosParametros = limpiarAst(nodo.parametros, datos)
     nuevoCuerpo = limpiarAst(nodo.cuerpo, datos)
+    datos.salir()
     funcion_incompleta = AST_funcion_incompleta(nuevosParametros, nuevoCuerpo)
-    nuevosDecoradores = limpiarAst(nodo.decoradores, datos)
-    for d in nuevosDecoradores:
-      funcion_incompleta.agregar_decorador(d)
     nuevoNodo = AST_expresion_funcion(funcion_incompleta)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_expresion_acceso:
     nuevoObjeto = limpiarAst(nodo.objeto, datos)
     nuevoCampo = limpiarAst(nodo.campo, datos)
     nuevoModificador = AST_modificador_objeto_acceso(nuevoCampo)
     nuevoNodo = AST_expresion_acceso(nuevoObjeto, nuevoModificador)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_expresion_index:
     nuevoObjeto = limpiarAst(nodo.objeto, datos)
     nuevoIndice = limpiarAst(nodo.indice, datos)
     nuevoModificador = AST_modificador_objeto_index(nuevoIndice)
     nuevoNodo = AST_expresion_index(nuevoObjeto, nuevoModificador)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_operador:
     nuevoIzq = limpiarAst(nodo.izq, datos)
@@ -403,30 +448,30 @@ def limpiarAst(nodo, datos):
     nuevoNodo = AST_operador(nuevoIzq, nodo.op, nuevoDer, nuevoOtro)
     if nodo.tieneParentesis():
       nuevoNodo.conParentesis()
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_expresion_new:
     nuevoTipo = limpiarAst(nodo.tipo, datos)
     nuevoNodo = AST_expresion_new(nuevoTipo)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_invocacion:
     nuevaFuncion = limpiarAst(nodo.funcion, datos)
     nuevosArgumentos = limpiarAst(nodo.argumentos, datos)
     nuevoNodo = AST_invocacion(nuevaFuncion, nuevosArgumentos)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_iteracion:
     nuevaVariable = limpiarAst(nodo.variable, datos)
     nuevoRango = limpiarAst(nodo.rango, datos)
     nuevoNodo = AST_iteracion(nuevaVariable, nuevoRango)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_asignacion:
     nuevoAsignable = limpiarAst(nodo.asignable, datos)
     nuevoValor = limpiarAst(nodo.valor, datos)
     nuevoNodo = AST_asignacion(nuevoAsignable, nuevoValor)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_combinador:
     clase = nodo.clase
@@ -434,188 +479,211 @@ def limpiarAst(nodo, datos):
     nuevoNodo = AST_combinador(clase, nuevaExpresion)
     nuevoCuerpo = limpiarAst(nodo.cuerpo, datos)
     nuevoNodo.agregar_cuerpo(nuevoCuerpo)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_return:
     nuevaExpresion = limpiarAst(nodo.expresion, datos)
     nuevoNodo = AST_return(nuevaExpresion)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_parametros:
     nuevosParametros = limpiarAst(nodo.parametros, datos)
     nuevosDecoradores = limpiarAst(nodo.decoradoresFuncion, datos)
     nuevoNodo = AST_parametros(nuevosParametros, nuevosDecoradores)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_argumentos:
     nuevaLista = limpiarAst(nodo.lista, datos)
     nuevoNodo = AST_argumentos()
     nuevoNodo.lista = nuevaLista
     nuevoNodo.tmp = nodo.tmp
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_campos:
     nuevaLista = limpiarAst(nodo.lista, datos)
     nuevoNodo = AST_campos()
     nuevoNodo.lista = nuevaLista
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_campo:
     nuevaClave = limpiarAst(nodo.clave, datos)
     nuevoValor = limpiarAst(nodo.valor, datos)
     nuevoNodo = AST_campo(nuevaClave, nuevoValor)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_elementos:
     nuevaLista = limpiarAst(nodo.lista, datos)
     nuevoNodo = AST_elementos()
     nuevoNodo.lista = nuevaLista
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_identificador:
     nuevoNombre = datos.limpiarNombre(nodo.identificador)
     nuevoNodo = AST_identificador(nuevoNombre)
-    nuevosDecoradores = limpiarAst(nodo.decoradores, datos)
-    for d in nuevosDecoradores:
-      nuevoNodo.agregar_decorador(d)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_identificadores:
     nuevaLista = limpiarAst(nodo.identificadores, datos)
     nuevoNodo = AST_identificadores(nuevaLista)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_indexacion_clase:
     nuevoIdentificador = limpiarAst(nodo.identificador, datos)
     nuevoNodo = AST_indexacion_clase(nuevoIdentificador)
-    nuevosDecoradores = limpiarAst(nodo.decoradores, datos)
-    for d in nuevosDecoradores:
-      nuevoNodo.agregar_decorador(d)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_identificador_objeto:
     nuevosCampos = limpiarAst(nodo.campos, datos)
     nuevoNodo = AST_identificador_objeto(nuevosCampos)
-    nuevosDecoradores = limpiarAst(nodo.decoradores, datos)
-    for d in nuevosDecoradores:
-      nuevoNodo.agregar_decorador(d)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_import:
     nuevoArchivo = limpiarAst(nodo.archivo, datos)
     nuevosImportables = limpiarAst(nodo.importables, datos)
     nuevoAlias = limpiarAst(nodo.opt_alias, datos)
     nuevoNodo = AST_import(nuevoArchivo, nuevosImportables, nuevoAlias, nodo.es_tipo)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_export:
     nuevaDeclaracion = limpiarAst(nodo.exportable, datos)
+    nuevaDeclaracion.apertura('\n')
     nuevoNodo = AST_export(nuevaDeclaracion)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
+    nuevoNodo.apertura('// ')
     return nuevoNodo
   if tipo == AST_decorador_tipo:
-    nuevoTipo = limpiarAst(nodo.tipo, datos)
+    nuevoTipo = AST_tipo_base(nodo.tipo.restore()) # limpiarAst(nodo.tipo, datos)
     nuevoNodo = AST_decorador_tipo(nuevoTipo)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     comentar(nuevoNodo)
     return nuevoNodo
   if tipo == AST_decorador_subtipo:
     nuevoTipo = limpiarAst(nodo.tipo, datos)
     nuevoNodo = AST_decorador_subtipo(nuevoTipo)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_decorador_opcional:
     nuevoNodo = AST_decorador_opcional()
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     comentar(nuevoNodo)
     return nuevoNodo
   if tipo == AST_decorador_default:
     nuevaAsignacion = limpiarAst(nodo.default, datos)
     nuevoNodo = AST_decorador_default(nuevaAsignacion)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_decorador_alias:
     nuevoAlias = limpiarAst(nodo.alias, datos)
     nuevoNodo = AST_decorador_alias(nuevoAlias)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     comentar(nuevoNodo)
     return nuevoNodo
-  if tipo == AST_modificador_comotipo:
+  if tipo == AST_decorador_comotipo:
     nuevoTipo = limpiarAst(nodo.tipo, datos)
-    nuevoNodo = AST_modificador_comotipo(nuevoTipo)
-    nuevoNodo.imitarEspacios(nodo)
+    nuevoNodo = AST_decorador_comotipo(nuevoTipo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
+    comentar(nuevoNodo)
+    return nuevoNodo
+  if tipo == AST_decorador_keyword:
+    nuevoIdentificador = limpiarAst(nodo.identificador, datos)
+    nuevoNodo = AST_decorador_keyword(nuevoIdentificador)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
+    comentar(nuevoNodo)
+    return nuevoNodo
+  if tipo == AST_decorador_implementacion:
+    nuevoNombre = limpiarAst(nodo.nombre, datos)
+    nuevoNodo = AST_decorador_implementacion(nuevoNombre)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
+    comentar(nuevoNodo)
+    return nuevoNodo
+  if tipo == AST_decorador_extension:
+    nuevoNombre = limpiarAst(nodo.nombre, datos)
+    nuevoNodo = AST_decorador_extension(nuevoNombre)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     comentar(nuevoNodo)
     return nuevoNodo
   if tipo == AST_tipo_base:
     nuevaBase = limpiarAst(nodo.base, datos)
     nuevoNodo = AST_tipo_base(nuevaBase)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_tipo_lista:
     nuevoNodo = AST_tipo_lista()
     nuevoTipo = limpiarAst(nodo.rec, datos)
     nuevoNodo.set_rec(nuevoTipo)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_tipo_objeto:
     nuevosCampos = limpiarAst(nodo.campos, datos)
     nuevoNodo = AST_tipo_objeto(nuevosCampos)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_tipo_flecha:
     nuevosParametros = limpiarAst(nodo.parametros, datos)
     nuevoResultado = limpiarAst(nodo.tipo_salida, datos)
     nuevoNodo = AST_tipo_flecha(nuevosParametros, nuevoResultado)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_tipo_suma:
     nuevosTipos = limpiarAst(nodo.sub_tipos, datos)
     nuevoNodo = AST_tipo_suma(nuevosTipos)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_tipo_producto:
     nuevosTipos = limpiarAst(nodo.sub_tipos, datos)
     nuevoNodo = AST_tipo_producto(nuevosTipos)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_tipo_tupla:
     nuevosTipos = limpiarAst(nodo.sub_tipos, datos)
     nuevoNodo = AST_tipo_tupla(nuevosTipos)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_tipo_compuesto:
     nuevaBase = limpiarAst(nodo.base, datos)
     nuevosTipos = limpiarAst(nodo.sub_tipos, datos)
     nuevoNodo = AST_tipo_compuesto(nuevaBase, nuevosTipos)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_tipo_varios:
     nuevosTipos = limpiarAst(nodo.sub_tipos, datos)
     nuevoNodo = AST_tipo_varios(nuevosTipos)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_tipo_derivado:
     nuevaExpresion = limpiarAst(nodo.expresion, datos)
     nuevoNodo = AST_tipo_derivado(nuevaExpresion)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_tipo_void:
     nuevoNodo = AST_tipo_void()
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_campos_tipo:
     nuevoNodo = AST_campos_tipo()
     nuevaLista = limpiarAst(nodo.lista, datos)
     nuevoNodo.lista = nuevaLista
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   if tipo == AST_campo_tipo:
     nuevaClave = limpiarAst(nodo.clave, datos)
     nuevoTipo = limpiarAst(nodo.tipo, datos)
     nuevoNodo = AST_campo_tipo(nuevaClave, nuevoTipo)
-    nuevoNodo.imitarEspacios(nodo)
+    imitarEspaciosYDecoradores(nuevoNodo, nodo, datos)
     return nuevoNodo
   falla()
+
+def imitarEspaciosYDecoradores(nodo, otro, datos):
+  nuevosDecoradores = limpiarAst(otro.decoradores, datos)
+  for d in nuevosDecoradores:
+    nodo.agregar_decorador(d)
+  nuevosDecoradoresPre = limpiarAst(otro.decoradores_pre, datos)
+  for d in nuevosDecoradoresPre:
+    nodo.agregar_decorador_pre(d)
+  nuevosEspaciosAbre = limpiarAst(otro.abre, datos)
+  nodo.apertura(nuevosEspaciosAbre)
+  nuevosEspaciosCierra = limpiarAst(otro.cierra, datos)
+  nodo.clausura(nuevosEspaciosCierra)
 
 def comentar(nodo):
   nodo.apertura("/*")
